@@ -4,10 +4,14 @@ services:
     container_name: claude-copilot-proxy
     restart: always
     ports:
-      - "18080:18080"
+      - "127.0.0.1:18080:18080"
     volumes:
       - ~/.claude-copilot-auth.json:/root/.claude-copilot-auth.json:ro
     environment:
       - COPILOT_PROXY_PORT=18080
+      - COPILOT_PROXY_BIND_HOST=0.0.0.0
+      - COPILOT_PROXY_CORS_ALLOWED_ORIGINS=${COPILOT_PROXY_CORS_ALLOWED_ORIGINS:-}
+      - COPILOT_ALLOW_AUTO_MODEL=${COPILOT_ALLOW_AUTO_MODEL:-0}
+      - COPILOT_DEFAULT_MODEL=${COPILOT_DEFAULT_MODEL:-claude-sonnet-4.6}
       - BRAVE_API_KEY=${BRAVE_API_KEY:-}
       - WEB_SEARCH_MAX_RESULTS=${WEB_SEARCH_MAX_RESULTS:-5}
