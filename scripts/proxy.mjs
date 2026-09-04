@@ -16,12 +16,19 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 
 const PORT = parseInt(process.env.COPILOT_PROXY_PORT || "18080", 10)
+const BIND_HOST = process.env.COPILOT_PROXY_BIND_HOST || "127.0.0.1"
 const AUTH_FILE =
   process.env.COPILOT_AUTH_FILE || join(homedir(), ".claude-copilot-auth.json")
 const COPILOT_API_BASE = "https://api.githubcopilot.com"
 const USER_AGENT = "claude-code-copilot-provider/1.0.0"
 const BRAVE_API_KEY = process.env.BRAVE_API_KEY || ""
 const WEB_SEARCH_MAX_RESULTS = parseInt(process.env.WEB_SEARCH_MAX_RESULTS || "5", 10)
+const CORS_ALLOWED_ORIGINS = (process.env.COPILOT_PROXY_CORS_ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean)
+const ALLOW_AUTO_MODEL = process.env.COPILOT_ALLOW_AUTO_MODEL === "1"
+const DEFAULT_COPILOT_MODEL = process.env.COPILOT_DEFAULT_MODEL || "claude-sonnet-4.6"
 
 // ─── Web Search ──────────────────────────────────────────────────────────────
 
@@ -364,6 +371,11 @@ const MODEL_MAP = {
   "claude-opus-4-6": "claude-opus-4.6",
   "claude-opus-4-6-20260214": "claude-opus-4.6",
   "claude-opus-4-6-latest": "claude-opus-4.6",
+  // Sonnet 4.6
+  "claude-sonnet-4-6": "claude-sonnet-4.6",
+  "claude-sonnet-4-6-latest": "claude-sonnet-4.6",
+  "claude-sonnet-4-6-20260219": "claude-sonnet-4.6",
+  "claude-sonnet-4-6-20260301": "claude-sonnet-4.6",
   // Sonnet 4.5
   "claude-sonnet-4-5-20250929": "claude-sonnet-4.5",
   "claude-sonnet-4-5": "claude-sonnet-4.5",
@@ -393,12 +405,28 @@ const MODEL_MAP = {
   "claude-3-5-opus-latest": "claude-opus-4.5",
 }
 
+function normalizeModelName(value) {
+  return typeof value === "string" ? value.trim() : ""
+}
+
+function isAutoModel(value) {
+  const model = normalizeModelName(value).toLowerCase()
+  return model === "" || model === "auto" || model === "copilot-auto" || model === "default"
+}
+
 // Fallback: try to intelligently map unknown model names
 function mapModel(anthropicModel) {
-  if (MODEL_MAP[anthropicModel]) return MODEL_MAP[anthropicModel]
+  if (isAutoModel(anthropicModel)) {
+    if (ALLOW_AUTO_MODEL) return null
+    return mapModel(DEFAULT_COPILOT_MODEL)
+  }
+
+  const normalized = normalizeModelName(anthropicModel)
+  if (MODEL_MAP[normalized]) return MODEL_MAP[normalized]
 
   // Try pattern matching for unknown dated versions
-  const m = anthropicModel.toLowerCase()
+  const m = normalized.toLowerCase()
+  if (m.includes("sonnet") && (m.includes("4.6") || m.includes("4-6"))) return "claude-sonnet-4.6"
   if (m.includes("opus") && (m.includes("4.6") || m.includes("4-6"))) return "claude-opus-4.6"
   if (m.includes("sonnet") && (m.includes("4.5") || m.includes("4-5"))) return "claude-sonnet-4.5"
   if (m.includes("sonnet")) return "claude-sonnet-4"
@@ -408,7 +436,36 @@ function mapModel(anthropicModel) {
   if (m.includes("opus")) return "claude-opus-4.6"
 
   // Pass through as-is
-  return anthropicModel
+  return normalized
+}
+
+function isLocalOrigin(originValue) {
+  try {
+    const parsed = new URL(originValue)
+    const host = parsed.hostname.toLowerCase()
+    return host === "localhost" || host === "127.0.0.1" || host === "::1"
+  } catch {
+    return false
+  }
+}
+
+function isAllowedOrigin(originValue) {
+  if (!originValue) return false
+  if (CORS_ALLOWED_ORIGINS.includes("*")) return true
+  if (CORS_ALLOWED_ORIGINS.length > 0) return CORS_ALLOWED_ORIGINS.includes(originValue)
+  return isLocalOrigin(originValue)
+}
+
+function applyCorsHeaders(req, res) {
+  const origin = req.headers.origin
+  if (!origin) return
+
+  if (isAllowedOrigin(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin)
+    res.setHeader("Vary", "Origin")
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, anthropic-version")
+  }
 }
 
 // ─── Auth ────────────────────────────────────────────────────────────────────
@@ -862,11 +919,14 @@ async function handleRequest(req, res, token) {
   console.log(`[${new Date().toISOString()}] ${method} ${url}`)
 
   // CORS
-  res.setHeader("Access-Control-Allow-Origin", "*")
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-  res.setHeader("Access-Control-Allow-Headers", "*")
+  applyCorsHeaders(req, res)
 
   if (method === "OPTIONS") {
+    if (req.headers.origin && !isAllowedOrigin(req.headers.origin)) {
+      res.writeHead(403, { "Content-Type": "application/json" })
+      res.end(JSON.stringify({ error: "Origin not allowed" }))
+      return
+    }
     res.writeHead(204)
     res.end()
     return
@@ -908,6 +968,8 @@ async function handleRequest(req, res, token) {
     res.writeHead(200, { "Content-Type": "application/json" })
     res.end(JSON.stringify({
       data: [
+        { id: "auto", object: "model" },
+        { id: "claude-sonnet-4-6", object: "model" },
         { id: "claude-opus-4-6", object: "model" },
         { id: "claude-sonnet-4-5-20250929", object: "model" },
         { id: "claude-sonnet-4-20250514", object: "model" },
@@ -949,7 +1011,8 @@ async function handleRequest(req, res, token) {
     return
   }
 
-  const copilotModel = mapModel(anthropicReq.model)
+  const requestedModel = anthropicReq.model || "auto"
+  const copilotModel = mapModel(requestedModel)
   const isStream = anthropicReq.stream === true
 
   // Check for web_search tool
@@ -959,15 +1022,18 @@ async function handleRequest(req, res, token) {
   }
 
   console.log(
-    `→ ${anthropicReq.model} → ${copilotModel} | ${isStream ? "stream" : "sync"} | ${anthropicReq.messages?.length || 0} messages${wsConfig.hasWebSearch ? " | 🔍 web_search" : ""}`
+    `→ ${requestedModel} → ${copilotModel || "copilot-auto"} | ${isStream ? "stream" : "sync"} | ${anthropicReq.messages?.length || 0} messages${wsConfig.hasWebSearch ? " | 🔍 web_search" : ""}`
   )
 
   // Build OpenAI request
   const openaiReq = {
-    model: copilotModel,
     messages: translateMessages(anthropicReq.messages, anthropicReq.system),
     max_tokens: anthropicReq.max_tokens || 4096,
     stream: isStream,
+  }
+
+  if (copilotModel) {
+    openaiReq.model = copilotModel
   }
 
   if (anthropicReq.temperature !== undefined) {
@@ -1328,10 +1394,11 @@ server.on("error", (err) => {
   process.exit(1)
 })
 
-server.listen(PORT, () => {
-  console.log(`✓ Proxy server running on http://localhost:${PORT}`)
+server.listen(PORT, BIND_HOST, () => {
+  console.log(`✓ Proxy server running on http://${BIND_HOST}:${PORT}`)
   console.log()
   console.log("  Translates: Anthropic Messages API → Copilot Chat Completions API")
+  console.log(`  Auto model mode: ${ALLOW_AUTO_MODEL ? "enabled (model omitted)" : `disabled (fallback: ${DEFAULT_COPILOT_MODEL})`}`)
   console.log()
   if (BRAVE_API_KEY) {
     console.log("  🔍 Web Search: Brave Search API (configured)")

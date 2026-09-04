@@ -16,6 +16,8 @@ This project runs a lightweight local proxy that translates between Anthropic's 
 
 - **Full API Translation** — Anthropic Messages API ↔ OpenAI Chat Completions, including streaming
 - **Web Search** — Emulates Anthropic's `web_search_20250305` tool using DuckDuckGo Lite (free) or Brave Search API
+- **Auto Model Option** — Supports `auto` model mode (optional) or explicit model mapping with Sonnet 4.6 aliases
+- **Safer Defaults** — Binds to localhost by default and restricts browser origins unless explicitly allowed
 - **Docker Support** — Run the proxy as an always-on container that survives reboots
 - **Zero Dependencies** — Pure Node.js, no npm install needed
 
@@ -57,6 +59,14 @@ The proxy runs with `restart: always` — it stays running across reboots.
 
 Inside Claude Code, use `/model` to switch between available models (Claude Opus, Sonnet, etc.).
 
+You can also use `auto` model mode if desired:
+
+```bash
+COPILOT_ALLOW_AUTO_MODEL=1 ./scripts/launch.sh
+```
+
+When auto mode is enabled, the proxy omits the `model` field and lets Copilot decide.
+
 ## Web Search
 
 The proxy emulates Anthropic's web search tool so Claude Code's WebSearch works automatically.
@@ -94,6 +104,10 @@ ANTHROPIC_BASE_URL=http://localhost:18080 ANTHROPIC_API_KEY=copilot-proxy claude
 | Variable | Default | Description |
 |---|---|---|
 | `COPILOT_PROXY_PORT` | `18080` | Port for the local proxy |
+| `COPILOT_PROXY_BIND_HOST` | `127.0.0.1` | Interface to bind the server to |
+| `COPILOT_PROXY_CORS_ALLOWED_ORIGINS` | *(empty)* | Comma-separated browser origins allowed for CORS. Empty means localhost-only origins. |
+| `COPILOT_ALLOW_AUTO_MODEL` | `0` | Set to `1` to omit `model` and let Copilot choose automatically |
+| `COPILOT_DEFAULT_MODEL` | `claude-sonnet-4.6` | Fallback model when auto mode is disabled and request model is `auto`/empty |
 | `COPILOT_AUTH_FILE` | `~/.claude-copilot-auth.json` | Path to saved OAuth token |
 | `BRAVE_API_KEY` | *(none)* | Brave Search API key for web search |
 | `WEB_SEARCH_MAX_RESULTS` | `5` | Max search results per query |
