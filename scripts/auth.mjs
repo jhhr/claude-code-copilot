@@ -8,15 +8,26 @@
  * ~/.claude-copilot-auth.json for use by the proxy server.
  */
 
-import { writeFileSync, readFileSync, existsSync } from "node:fs"
+import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { join, dirname } from "node:path"
 
+// Public OAuth client ID for the VS Code GitHub Copilot extension. Intentionally
+// shared — this same value is hardcoded in VS Code, OpenCode, Aider, and every
+// other Copilot client. GitHub only allows a whitelist of Microsoft/GitHub-owned
+// apps to call api.githubcopilot.com, so reusing this ID is the only path for
+// unofficial clients. Not a secret; the per-user access token is what matters.
 const CLIENT_ID = "Ov23li8tweQw6odWQebz"
 const DEVICE_CODE_URL = "https://github.com/login/device/code"
 const ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token"
-const AUTH_FILE =
-  process.env.COPILOT_AUTH_FILE || join(homedir(), ".claude-copilot-auth.json")
+// Default to repo-local .config/auth.json (creates dir if missing). Legacy
+// ~/.claude-copilot-auth.json is honored if it already exists (back-compat).
+function defaultAuthFile() {
+  const legacy = join(homedir(), ".claude-copilot-auth.json")
+  if (existsSync(legacy)) return legacy
+  return join(process.cwd(), ".config", "auth.json")
+}
+const AUTH_FILE = process.env.COPILOT_AUTH_FILE || defaultAuthFile()
 const USER_AGENT = "claude-code-copilot-provider/1.0.0"
 
 async function initiateDeviceCode() {
@@ -198,6 +209,7 @@ async function main() {
     created_at: new Date().toISOString(),
   }
 
+  mkdirSync(dirname(AUTH_FILE), { recursive: true })
   writeFileSync(AUTH_FILE, JSON.stringify(authData, null, 2))
   console.log(`✓ Token saved to: ${AUTH_FILE}`)
   console.log()
@@ -206,7 +218,7 @@ async function main() {
   console.log()
   console.log("Then run Claude Code with:")
   console.log(
-    "  ANTHROPIC_BASE_URL=http://localhost:18080 ANTHROPIC_API_KEY=copilot-proxy claude"
+    "  ANTHROPIC_BASE_URL=http://localhost:18080 ANTHROPIC_AUTH_TOKEN=copilot-proxy claude"
   )
 }
 

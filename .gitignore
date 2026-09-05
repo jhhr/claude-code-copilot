@@ -4,3 +4,8 @@ node_modules/
 .env
 .claude-copilot-auth.json
 .omc/
+
+# Local runtime config (auth tokens, secrets). Keep the dir tracked via .gitkeep
+# and check in *.example.json templates.
+.config/*.json
+!.config/*.example.json

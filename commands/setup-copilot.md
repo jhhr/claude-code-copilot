@@ -10,9 +10,9 @@ Help the user set up the GitHub Copilot provider for Claude Code. Follow these s
    ls ${CLAUDE_PLUGIN_ROOT}/../github-copilot-provider/scripts/
    ```
 
-2. Check if the user is already authenticated:
+2. Check if the user is already authenticated (checks repo-local `.config/auth.json` first, then legacy `~/.claude-copilot-auth.json`):
    ```
-   cat ~/.claude-copilot-auth.json 2>/dev/null
+   cat ${CLAUDE_PLUGIN_ROOT}/../github-copilot-provider/.config/auth.json 2>/dev/null || cat ~/.claude-copilot-auth.json 2>/dev/null
    ```
 
 3. If not authenticated, tell the user to run in a separate terminal:
@@ -30,13 +30,13 @@ Help the user set up the GitHub Copilot provider for Claude Code. Follow these s
 
    **Terminal 2** — Run Claude Code:
    ```
-   ANTHROPIC_BASE_URL=http://localhost:18080 ANTHROPIC_API_KEY=copilot-proxy claude
+   ANTHROPIC_BASE_URL=http://localhost:18080 ANTHROPIC_AUTH_TOKEN=copilot-proxy claude
    ```
 
 5. For convenience, suggest they add a shell alias:
    ```bash
    # Add to ~/.zshrc or ~/.bashrc
-   alias claude-copilot='ANTHROPIC_BASE_URL=http://localhost:18080 ANTHROPIC_API_KEY=copilot-proxy claude'
+   alias claude-copilot='ANTHROPIC_BASE_URL=http://localhost:18080 ANTHROPIC_AUTH_TOKEN=copilot-proxy claude'
    ```
 
 Be concise and guide them through each step, verifying success before moving on.

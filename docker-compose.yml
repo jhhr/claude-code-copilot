@@ -6,7 +6,10 @@ services:
     ports:
       - "127.0.0.1:18080:18080"
     volumes:
-      - ~/.claude-copilot-auth.json:/root/.claude-copilot-auth.json:ro
+      # Bind-mount the repo-local .config/ into the container so auth.json
+      # and config.json are read at runtime. Read-write so `node scripts/auth.mjs`
+      # (when run inside the container) can write the token back.
+      - ./.config:/app/.config
     environment:
       - COPILOT_PROXY_PORT=18080
       - COPILOT_PROXY_BIND_HOST=0.0.0.0
@@ -15,3 +18,8 @@ services:
       - COPILOT_DEFAULT_MODEL=${COPILOT_DEFAULT_MODEL:-claude-sonnet-4.6}
       - BRAVE_API_KEY=${BRAVE_API_KEY:-}
       - WEB_SEARCH_MAX_RESULTS=${WEB_SEARCH_MAX_RESULTS:-5}
+      - COPILOT_PROXY_API_KEY=${COPILOT_PROXY_API_KEY:-}
+      - COPILOT_MAX_PROMPT_TOKENS=${COPILOT_MAX_PROMPT_TOKENS:-115000}
+      - COPILOT_TOOL_RESULT_MAX_CHARS=${COPILOT_TOOL_RESULT_MAX_CHARS:-25000}
+      - COPILOT_KEEP_RECENT_TOOL_RESULTS=${COPILOT_KEEP_RECENT_TOOL_RESULTS:-2}
+      - COPILOT_DEFAULT_MAX_OUTPUT=${COPILOT_DEFAULT_MAX_OUTPUT:-}
