@@ -14,6 +14,7 @@ import { createServer } from "node:http"
 import { readFileSync, existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { pathToFileURL } from "node:url"
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 // Optional JSON config file. Lookup order:
@@ -71,7 +72,29 @@ const AUTH_FILE = cfgString(
   defaultConfigLocation("auth.json", ".claude-copilot-auth.json")
 )
 const COPILOT_API_BASE = "https://api.githubcopilot.com"
-const USER_AGENT = "claude-code-copilot-provider/1.0.0"
+const USER_AGENT = cfgString(
+  "COPILOT_USER_AGENT",
+  "user_agent",
+  "GitHubCopilot/1.155.0"
+)
+const COPILOT_INTEGRATION_ID = cfgString(
+  "COPILOT_INTEGRATION_ID",
+  "integration_id",
+  cfgString("COPILOT_INTEGRATOR_ID", "integrator_id", "vscode-chat")
+)
+const COPILOT_EDITOR_VERSION = cfgString(
+  "COPILOT_EDITOR_VERSION",
+  "editor_version",
+  "vscode/1.95.0"
+)
+const COPILOT_EDITOR_PLUGIN_VERSION = cfgString(
+  "COPILOT_EDITOR_PLUGIN_VERSION",
+  "editor_plugin_version",
+  "copilot-chat/0.26.7"
+)
+const COPILOT_DEBUG_REQUESTS =
+  cfgString("COPILOT_DEBUG_REQUESTS", "debug_requests", "0") === "1" ||
+  cfgString("COPILOT_DEBUG_HEADERS", "debug_headers", "0") === "1"
 const BRAVE_API_KEY = cfgString("BRAVE_API_KEY", "brave_api_key", "")
 const WEB_SEARCH_MAX_RESULTS = cfgInt("WEB_SEARCH_MAX_RESULTS", "web_search_max_results", 5)
 
@@ -561,6 +584,37 @@ async function fetchWithRetry(url, opts, { retries = 2, label = "copilot" } = {}
   throw new Error(`fetchWithRetry: exhausted retries without response (${label})`)
 }
 
+function buildCopilotHeaders({
+  token,
+  hasImages = false,
+  includeOpenAIIntent = true,
+  extraHeaders = {},
+} = {}) {
+  const headers = {
+    "Content-Type": "application/json",
+    Authorization: "Bearer " + token,
+    "User-Agent": USER_AGENT,
+    "Editor-Version": COPILOT_EDITOR_VERSION,
+    "Editor-Plugin-Version": COPILOT_EDITOR_PLUGIN_VERSION,
+    "Copilot-Integration-Id": COPILOT_INTEGRATION_ID,
+    "x-initiator": "user",
+    "X-GitHub-Api-Version": "2022-11-28",
+  }
+
+  if (includeOpenAIIntent) headers["Openai-Intent"] = "conversation-edits"
+  if (hasImages) headers["Copilot-Vision-Request"] = "true"
+
+  Object.assign(headers, extraHeaders)
+
+  if (COPILOT_DEBUG_REQUESTS) {
+    console.log(
+      `  [debug] Copilot headers -> integration=${COPILOT_INTEGRATION_ID} model=${extraHeaders.model || "<unset>"} editor=${COPILOT_EDITOR_VERSION}`
+    )
+  }
+
+  return headers
+}
+
 /**
  * Lazy-fetch Copilot's real model catalog. The hardcoded /v1/models list we
  * ship works as a fallback, but the live catalog tracks new Copilot rollouts
@@ -598,10 +652,7 @@ async function fetchCopilotModels(token) {
   }
   try {
     const res = await fetch(`${COPILOT_API_BASE}/models`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "User-Agent": USER_AGENT,
-      },
+      headers: buildCopilotHeaders({ token, includeOpenAIIntent: true }),
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
@@ -611,8 +662,8 @@ async function fetchCopilotModels(token) {
     // Only keep Claude entries — Copilot returns GPT models too, which CC
     // can't use. Each entry has at least `{ id }`; preserve passthrough
     // fields so CC's model picker has full metadata.
-    const claudeModels = raw.filter((m) => typeof m?.id === "string" && m.id.includes("claude"))
-    if (claudeModels.length === 0) throw new Error("no claude models in response")
+    const claudeModels = raw.filter((m) => typeof m?.id === 'string' && m.id.includes('claude'))
+    if (claudeModels.length === 0) throw new Error('no claude models in response')
     modelCache = { fetchedAt: now, models: claudeModels }
     console.log(`  ⚡ Cached ${claudeModels.length} Copilot Claude models for 1h`)
     return claudeModels
@@ -948,6 +999,39 @@ function mapModel(anthropicModel) {
 
   // Pass through as-is
   return anthropicModel
+}
+
+const SUPPORTED_COPILOT_MODELS = new Set([
+  "claude-opus-4.7",
+  "claude-opus-4.6",
+  "claude-opus-4.5",
+  "claude-sonnet-4.6",
+  "claude-sonnet-4.5",
+  "claude-haiku-4.5",
+])
+const INTEGRATOR_MODEL_FALLBACKS = {
+  opencode: "claude-sonnet-4.5",
+  "vscode-chat": "claude-sonnet-4.5",
+  "vscode": "claude-sonnet-4.5",
+}
+const INTEGRATOR_RESTRICTED_MODELS = {
+  opencode: new Set(["claude-opus-4.7", "claude-opus-4.6", "claude-sonnet-4.6"]),
+}
+
+function resolveCopilotModel(anthropicModel, integrationId = COPILOT_INTEGRATION_ID) {
+  const mapped = mapModel(anthropicModel)
+  const restricted = INTEGRATOR_RESTRICTED_MODELS[integrationId]
+  if (mapped && SUPPORTED_COPILOT_MODELS.has(mapped) && !(restricted && restricted.has(mapped))) {
+    return mapped
+  }
+
+  const fallback = INTEGRATOR_MODEL_FALLBACKS[integrationId] || "claude-sonnet-4.5"
+  if (COPILOT_DEBUG_REQUESTS) {
+    console.log(
+      `  [debug] model fallback: requested=${anthropicModel} => mapped=${mapped} => fallback=${fallback} (integration=${integrationId})`
+    )
+  }
+  return fallback
 }
 
 // Generous-but-safe default output cap per model. Anthropic's CC defaults to
@@ -1695,7 +1779,7 @@ async function handleRequest(req, res, token) {
     return
   }
 
-  const copilotModel = mapModel(anthropicReq.model)
+  const copilotModel = resolveCopilotModel(anthropicReq.model, COPILOT_INTEGRATION_ID)
   const isStream = anthropicReq.stream === true
 
   // Compact request to fit under Copilot's 128K prompt cap.
@@ -2158,7 +2242,8 @@ async function handleRequest(req, res, token) {
 
 // ─── Server ──────────────────────────────────────────────────────────────────
 
-const token = loadAuth()
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const token = loadAuth()
 console.log()
 console.log("╔══════════════════════════════════════════════════════════╗")
 console.log("║   GitHub Copilot Proxy for Claude Code                  ║")
@@ -2216,3 +2301,6 @@ process.on("SIGTERM", () => {
   server.close()
   process.exit(0)
 })
+}
+
+export { buildCopilotHeaders, mapModel, resolveCopilotModel }
