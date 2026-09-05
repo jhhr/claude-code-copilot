@@ -1,0 +1,18 @@
+{
+  "_comment": "Copy to .config/config.json and edit to taste. All keys are optional — anything omitted falls back to its built-in default. Env vars (COPILOT_*, BRAVE_API_KEY) still win when set. Remove this _comment key before use; strict JSON doesn't allow comments.",
+
+  "proxy_port": 18080,
+  "auth_file": ".config/auth.json",
+
+  "proxy_api_key": "set-a-long-random-secret-when-exposing-beyond-localhost",
+
+  "max_prompt_tokens": 115000,
+  "tool_result_max_chars": 25000,
+  "keep_recent_tool_results": 2,
+  "default_max_output": 16384,
+
+  "brave_api_key": "",
+  "web_search_max_results": 5,
+
+  "premium_request_overage_usd": 0.04
+}

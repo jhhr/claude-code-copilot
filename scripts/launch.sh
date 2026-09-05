@@ -8,7 +8,14 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PORT="${COPILOT_PROXY_PORT:-18080}"
-AUTH_FILE="${COPILOT_AUTH_FILE:-$HOME/.claude-copilot-auth.json}"
+# Resolve auth file: explicit override → repo .config/auth.json → legacy ~/.claude-copilot-auth.json
+if [ -n "$COPILOT_AUTH_FILE" ]; then
+    AUTH_FILE="$COPILOT_AUTH_FILE"
+elif [ -f "$PROJECT_DIR/.config/auth.json" ]; then
+    AUTH_FILE="$PROJECT_DIR/.config/auth.json"
+else
+    AUTH_FILE="$HOME/.claude-copilot-auth.json"
+fi
 
 # Check auth
 if [ ! -f "$AUTH_FILE" ]; then
@@ -72,5 +79,5 @@ echo "Starting Claude Code via Copilot..."
 echo ""
 
 ANTHROPIC_BASE_URL="http://localhost:$PORT" \
-ANTHROPIC_API_KEY="copilot-proxy" \
+ANTHROPIC_AUTH_TOKEN="copilot-proxy" \
 claude "$@"
