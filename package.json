@@ -7,7 +7,8 @@
   "scripts": {
     "auth": "node scripts/auth.mjs",
     "proxy": "node scripts/proxy.mjs",
-    "start": "bash scripts/launch.sh"
+    "start": "bash scripts/launch.sh",
+    "test": "node --test"
   },
   "keywords": [
     "claude-code",
